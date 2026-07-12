@@ -5,7 +5,8 @@ Skips the verification stage (no accuracy section) — run agent.verifier
 separately first if an accuracy report is wanted in the page.
 """
 
-from agent.config import CLASSIFIED_DIR, FINAL_DIR
+from agent.composio_lookup import enrich_results_with_catalog
+from agent.config import CLASSIFIED_DIR, FINAL_DIR, RAW_DIR
 from agent.html_generator import generate_html_report
 from agent.pattern_analyzer import analyze_patterns
 from agent.schemas import AppResearchResult
@@ -19,6 +20,11 @@ def main():
     raw_results = load_json(CLASSIFIED_DIR / "results_v1.json")
     results = [AppResearchResult(**r) for r in raw_results]
     logger.info(f"Loaded {len(results)}/100 classified apps")
+
+    catalog_path = RAW_DIR / "composio_catalog.json"
+    if catalog_path.exists():
+        matched = enrich_results_with_catalog(results, load_json(catalog_path))
+        logger.info(f"Composio catalog: {matched}/{len(results)} apps already exist as Composio toolkits")
 
     patterns = analyze_patterns(results)
     logger.info(f"Generated {len(patterns.insights)} insights")

@@ -123,6 +123,8 @@ class AppResearchResult(BaseModel):
     # MCP & Agent Readiness
     has_existing_mcp: bool = Field(default=False, description="Known MCP server exists?")
     mcp_source: Optional[str] = Field(None, description="URL to MCP server if exists")
+    composio_toolkit_exists: bool = Field(default=False, description="App already has a Composio toolkit (first-party ground truth from Composio's own catalog, not LLM-inferred)")
+    composio_tools_count: Optional[int] = Field(None, description="Number of tools Composio already exposes for this app, if composio_toolkit_exists")
     buildability: str = Field(default="", description="easy, moderate, hard, not_feasible")
     buildability_rationale: str = Field(default="", description="1-2 sentence explanation")
     main_blocker: Optional[str] = Field(None, description="Primary blocker if not 'easy'")

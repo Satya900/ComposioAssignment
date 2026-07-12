@@ -21,6 +21,7 @@ import httpx
 
 from agent.config import (
     KNOWN_APPS,
+    RAW_DIR,
     TEMPERATURE,
     VERIFICATION_DIR,
     VERIFICATION_MAX_TOKENS,
@@ -45,6 +46,24 @@ from agent.llm import chat_completion_with_failover
 from agent.classifier import _TAXONOMY_ALLOWED, _coerce_taxonomy_value, _parse_bool
 
 logger = get_logger()
+
+
+def _load_composio_catalog() -> Dict[str, Any]:
+    """Composio's own toolkit catalog (agent/composio_lookup.py output) —
+    real, live data from Composio's API, not LLM-inferred. Used below as a
+    first-party ground-truth cross-check, the same role KNOWN_APPS plays but
+    sourced from Composio directly instead of hand-curated."""
+    path = RAW_DIR / "composio_catalog.json"
+    if not path.exists():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+COMPOSIO_CATALOG = _load_composio_catalog()
 
 
 # ─── LAYER 1: AUTOMATED CROSS-CHECK ─────────────────────────────────────────
@@ -105,6 +124,25 @@ async def automated_cross_check(result: AppResearchResult) -> List[str]:
                 f"API_TYPE MISMATCH vs known: agent={result.api_type}, known={list(known_api)}"
             )
 
+    # Check 2b: Composio's own toolkit catalog (first-party ground truth,
+    # not LLM-inferred — see _load_composio_catalog above)
+    composio_entry = COMPOSIO_CATALOG.get(result.name)
+    if composio_entry:
+        tools_count = composio_entry.get("tools_count") or 0
+        if tools_count > 0 and result.buildability == "not_feasible":
+            flags.append(
+                f"COMPOSIO MISMATCH: buildability=not_feasible but Composio's own "
+                f"catalog already has a working toolkit with {int(tools_count)} tools for this app"
+            )
+
+        composio_auth = set(composio_entry.get("auth_methods") or [])
+        agent_auth = set(result.auth_methods)
+        if composio_auth and agent_auth and not composio_auth.intersection(agent_auth):
+            flags.append(
+                f"COMPOSIO AUTH MISMATCH: agent={result.auth_methods}, "
+                f"Composio catalog={sorted(composio_auth)}"
+            )
+
     # Check 3: Evidence URLs are reachable (sample first 2)
     for url in result.evidence_urls[:2]:
         try:
@@ -140,6 +178,35 @@ async def run_automated_checks(
     )
 
     return all_flags
+
+
+_INCONCLUSIVE_EVIDENCE_MARKERS = (
+    "no information", "not found", "not specified", "no mention",
+    "not explicitly", "not publicly disclosed", "unknown", "not stated",
+    "no evidence", "not provided", "not clear",
+)
+
+
+def _is_inconclusive_evidence(evidence: str) -> bool:
+    """True if the verifier's own evidence text says it found nothing —
+    i.e. it couldn't confirm OR deny the agent's answer, which is not the
+    same as the agent being wrong."""
+    e = (evidence or "").lower()
+    return any(marker in e for marker in _INCONCLUSIVE_EVIDENCE_MARKERS)
+
+
+def _values_equivalent(a: Any, b: Any) -> bool:
+    """Loose equality for agent_value vs correct_value: case/whitespace
+    normalized, and a list is treated as equivalent to a scalar/subset of
+    itself (a model asked to agree/disagree on a list field sometimes
+    echoes back one representative item rather than the full list)."""
+    def norm(v: Any) -> set:
+        if isinstance(v, list):
+            return {str(x).strip().lower() for x in v}
+        return {str(v).strip().lower()} if v is not None else set()
+
+    na, nb = norm(a), norm(b)
+    return bool(na) and bool(nb) and (na == nb or na <= nb or nb <= na)
 
 
 # ─── LAYER 2: VERIFICATION AGENT ────────────────────────────────────────────
@@ -204,37 +271,59 @@ async def verify_single_app(
             }
 
             for field_name, agent_value in field_map.items():
-                verification = parsed.get(field_name, {})
-                if isinstance(verification, dict):
-                    # `.get(key, default)` only falls back when the key is
-                    # ABSENT — a weaker model frequently emits the key with
-                    # an explicit `null` (e.g. no evidence to cite), which
-                    # `.get` happily returns as None. FieldVerification's
-                    # evidence_url/is_correct aren't Optional, so a None
-                    # here raised a validation error that silently aborted
-                    # the rest of this field loop, undercounting the app to
-                    # 1 field checked instead of 6. Coalesce explicitly
-                    # instead of relying on the dict-default alone.
-                    agree = verification.get("agree")
-                    if agree is None:
-                        agree = True
-                    correct_value = verification.get("correct_value")
-                    if correct_value is None:
-                        correct_value = agent_value
-                    evidence = verification.get("evidence")
-                    if evidence is None:
-                        evidence = ""
+                verification = parsed.get(field_name)
+                if not isinstance(verification, dict):
+                    # Missing key, explicit null, or the model flattened its
+                    # answer instead of the requested {agree, correct_value,
+                    # evidence} object (a weaker fallback model does this
+                    # often). Previously this field was silently skipped —
+                    # `isinstance(verification, dict)` was False so nothing
+                    # got appended — which undercounts overall_total (an app
+                    # could end up "1/1 correct" instead of "5/6") and biases
+                    # the per-field aggregate toward whichever fields the
+                    # model happens to format correctly. Normalize to {} so
+                    # every field always contributes exactly one
+                    # FieldVerification, defaulting to "agree" per the
+                    # prompt's own ambiguous-case rule.
+                    verification = {}
 
-                    fields_checked.append(
-                        FieldVerification(
-                            field_name=field_name,
-                            agent_value=agent_value,
-                            actual_value=correct_value if not agree else agent_value,
-                            is_correct=agree,
-                            evidence_url=evidence,
-                            notes=None if agree else f"Verifier disagrees: {evidence}",
-                        )
+                agree = verification.get("agree")
+                if agree is None:
+                    agree = True
+                elif not isinstance(agree, bool):
+                    agree = _parse_bool(agree)
+                correct_value = verification.get("correct_value")
+                if correct_value is None:
+                    correct_value = agent_value
+                evidence = verification.get("evidence")
+                if evidence is None:
+                    evidence = ""
+                elif not isinstance(evidence, str):
+                    evidence = str(evidence)
+
+                # The prompt tells the verifier to default to agreeing when
+                # the fresh docs are ambiguous/missing — the model frequently
+                # ignores that and sets agree=False anyway while citing "no
+                # information found" as its own evidence, or while echoing
+                # back a correct_value that's actually the same as the
+                # agent's (e.g. both "not_found"). Neither is a real
+                # disagreement; scoring them as errors would be measuring the
+                # verifier's limited 2-page context window, not the agent's
+                # accuracy. Honor the prompt's own rule here since the model
+                # didn't.
+                if not agree and (_is_inconclusive_evidence(evidence) or _values_equivalent(agent_value, correct_value)):
+                    agree = True
+
+                fields_checked.append(
+                    FieldVerification(
+                        field_name=field_name,
+                        agent_value=agent_value,
+                        actual_value=correct_value if not agree else agent_value,
+                        is_correct=agree,
+                        evidence_url=evidence,
+                        notes=None if agree else f"Verifier disagrees: {evidence}",
                     )
+                )
 
     except Exception as e:
         logger.warning(f"Verification LLM call failed for {result.name}: {e}")

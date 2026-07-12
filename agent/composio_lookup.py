@@ -92,6 +92,31 @@ def lookup_toolkit(client: Composio, app_name: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def enrich_results_with_catalog(
+    results: List[Any], catalog: Dict[str, Any]
+) -> int:
+    """
+    Merge the Composio catalog lookup onto already-classified AppResearchResult
+    objects in place, setting composio_toolkit_exists/composio_tools_count.
+    This is a deterministic dict merge against Composio's own catalog data —
+    no LLM call, no cost, and unlike every other field on the result it isn't
+    inferred from scraped docs, so it's the one field that's ground truth by
+    construction rather than by verification.
+    Returns the number of results that had a catalog match.
+    """
+    matched = 0
+    for r in results:
+        entry = catalog.get(r.name)
+        if entry:
+            r.composio_toolkit_exists = True
+            r.composio_tools_count = entry.get("tools_count")
+            matched += 1
+        else:
+            r.composio_toolkit_exists = False
+            r.composio_tools_count = None
+    return matched
+
+
 def run_composio_catalog_lookup(
     apps: List[AppInput], save_path: Optional[str] = None
 ) -> Dict[str, Any]:

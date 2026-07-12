@@ -4,13 +4,15 @@ Stage 4: Pattern Analysis Engine
 Transforms 100 individual app results into cross-cutting insights.
 This is where the "Product Ops" brain shows — not just data, but implications.
 
-Analyzes 6 dimensions:
+Analyzes 8 dimensions:
 1. Auth distribution
 2. Self-serve vs gated by category
 3. Buildability scorecard
 4. Common blockers
 5. MCP landscape
 6. Strategic quadrant (self-serve × API breadth)
+7. Docs quality vs buildability correlation
+8. Composio catalog coverage (already-built vs net-new opportunity)
 """
 
 import json
@@ -276,6 +278,41 @@ def analyze_patterns(results: List[AppResearchResult]) -> PatternReport:
                 "Documentation quality is the strongest predictor of buildability. "
                 "Composio could partner with apps that have strong APIs but weak docs "
                 "to create better documentation — unlocking integration for both parties."
+            ),
+        ))
+
+    # ─── DIMENSION 8: Composio Catalog Coverage ──────────────────────────
+    # Ground truth from Composio's own toolkit catalog (agent/composio_lookup.py),
+    # not LLM-inferred — this is the one dimension where "does Composio already
+    # have this?" is answered directly by Composio's own API rather than by
+    # scraped docs + classification.
+
+    already_covered = [r for r in results if r.composio_toolkit_exists]
+    net_new = [r for r in results if not r.composio_toolkit_exists]
+    total_existing_tools = sum(r.composio_tools_count or 0 for r in already_covered)
+    net_new_easy_wins = [r for r in net_new if r.buildability == "easy"]
+
+    if results:
+        insights.append(PatternInsight(
+            headline=(
+                f"{len(already_covered)}/{len(results)} researched apps already exist as Composio "
+                f"toolkits ({total_existing_tools} tools total) — the real net-new opportunity is "
+                f"the other {len(net_new)}, of which {len(net_new_easy_wins)} are easy wins today"
+            ),
+            category="mcp",
+            supporting_data={
+                "already_covered_count": len(already_covered),
+                "already_covered_apps": [r.name for r in already_covered],
+                "total_existing_tools": total_existing_tools,
+                "net_new_count": len(net_new),
+                "net_new_easy_win_apps": [r.name for r in net_new_easy_wins],
+            },
+            affected_apps=[r.name for r in net_new_easy_wins[:15]],
+            implication=(
+                f"Cross-checking against Composio's own catalog (not just LLM classification) "
+                f"separates 'already built' from 'actually new' — of the {len(net_new)} apps with "
+                f"no existing Composio toolkit, {len(net_new_easy_wins)} are self-serve with a "
+                f"broad-enough API to ship immediately, making them the highest-leverage next builds."
             ),
         ))
 

@@ -336,19 +336,19 @@ def _build_html(**kwargs) -> str:
                 <div class="space-y-3">
                     <div class="flex items-center gap-3">
                         <span class="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center text-sm font-bold">1</span>
-                        <div><span class="text-white font-medium">Web Research</span><span class="text-slate-400 text-sm ml-2">Composio SDK + Firecrawl fallback</span></div>
+                        <div><span class="text-white font-medium">Web Research</span><span class="text-slate-400 text-sm ml-2">Firecrawl + direct HTTP, plus a separate GitHub/npm MCP check</span></div>
                     </div>
                     <div class="flex items-center gap-3">
                         <span class="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center text-sm font-bold">2</span>
-                        <div><span class="text-white font-medium">LLM Classification</span><span class="text-slate-400 text-sm ml-2">Claude Sonnet, temp=0, structured JSON</span></div>
+                        <div><span class="text-white font-medium">LLM Classification</span><span class="text-slate-400 text-sm ml-2">Groq (Llama 3.3 / GPT-OSS) with OpenRouter fallback, temp=0</span></div>
                     </div>
                     <div class="flex items-center gap-3">
                         <span class="w-8 h-8 rounded-lg bg-red-500/20 text-red-400 flex items-center justify-center text-sm font-bold">3</span>
-                        <div><span class="text-white font-medium">Verification</span><span class="text-slate-400 text-sm ml-2">3-layer: auto + agent + human</span></div>
+                        <div><span class="text-white font-medium">Verification</span><span class="text-slate-400 text-sm ml-2">3-layer: auto (incl. Composio's own catalog) + agent + human</span></div>
                     </div>
                     <div class="flex items-center gap-3">
                         <span class="w-8 h-8 rounded-lg bg-green-500/20 text-green-400 flex items-center justify-center text-sm font-bold">4</span>
-                        <div><span class="text-white font-medium">Pattern Analysis</span><span class="text-slate-400 text-sm ml-2">6 dimensions, 7+ insights</span></div>
+                        <div><span class="text-white font-medium">Pattern Analysis</span><span class="text-slate-400 text-sm ml-2">8 dimensions, 8 insights</span></div>
                     </div>
                 </div>
             </div>
@@ -360,25 +360,27 @@ def _build_html(**kwargs) -> str:
                     <div>
                         <h4 class="text-emerald-400 font-medium mb-1">✅ What Worked</h4>
                         <ul class="text-slate-400 text-sm space-y-1">
-                            <li>• Composio SDK + Firecrawl covered most apps' docs</li>
-                            <li>• Claude Sonnet reliably extracted structured data</li>
-                            <li>• Verification loop caught and corrected real errors</li>
+                            <li>• Firecrawl + direct HTTP covered docs for the large majority of apps</li>
+                            <li>• Groq's structured JSON mode reliably extracted data when quota was available</li>
+                            <li>• Composio's own toolkit catalog gave real ground truth for 50/100 apps (real tool counts, real auth modes) — a genuine cross-check, not just LLM inference</li>
+                            <li>• The verification/correction loop caught and auto-fixed real errors, e.g. Stripe was first classified auth=not_found/buildability=not_feasible; independent re-check corrected it to OAuth2/easy</li>
                         </ul>
                     </div>
                     <div>
                         <h4 class="text-amber-400 font-medium mb-1">⚠️ Where Human Was Needed</h4>
                         <ul class="text-slate-400 text-sm space-y-1">
-                            <li>• Gated apps required manual "self-serve" verification</li>
-                            <li>• CLI tools (Sherlock, Mermaid) needed human classification</li>
-                            <li>• Prompt tuning after pilot run</li>
+                            <li>• Groq's free daily quota ran out mid-run — wiring an OpenRouter fallback, plus a taxonomy-normalization layer (the free fallback model doesn't reliably honor strict enums), took manual debugging across several retry passes</li>
+                            <li>• Two verification-pipeline bugs (a JSON-shape edge case, a None-vs-missing-key edge case) silently deflated/corrupted results mid-run and needed a human to catch and fix</li>
+                            <li>• Gated apps (PitchBook, DealCloud, Brex) needed judgment calls on "is this really self-serve" beyond what the docs literally say</li>
+                            <li>• Human spot-check checklist generated for 12 apps across all 10 categories for manual doc cross-referencing (data/verification/human_checklist.md)</li>
                         </ul>
                     </div>
                     <div>
                         <h4 class="text-red-400 font-medium mb-1">❌ What Failed</h4>
                         <ul class="text-slate-400 text-sm space-y-1">
-                            <li>• Some obscure apps (fanbasis, iPayX) had no findable docs</li>
-                            <li>• Rate limits occasionally caused research gaps</li>
-                            <li>• Buildability for partner-gated apps was hard to assess</li>
+                            <li>• fanbasis, iPayX: no usable public API docs found — low-confidence, best-effort classification</li>
+                            <li>• The free OpenRouter fallback model occasionally returned garbled/repeated-token output under load, requiring a second classification pass for a handful of apps</li>
+                            <li>• Sherlock, Mermaid CLI are CLI tools, not SaaS APIs — correctly flagged CLI_Only but with inherently thin "API surface" data</li>
                         </ul>
                     </div>
                 </div>
@@ -441,7 +443,7 @@ def _build_html(**kwargs) -> str:
             <div class="flex gap-4 mt-3 md:mt-0">
                 <a href="https://github.com/Satya900/composio-app-research" class="hover:text-white transition">GitHub Repo</a>
                 <span>·</span>
-                <span>Powered by Composio SDK + Claude API</span>
+                <span>Powered by Composio SDK (toolkit catalog) + Firecrawl + Groq/OpenRouter</span>
             </div>
         </div>
     </footer>
@@ -498,7 +500,7 @@ def _build_html(**kwargs) -> str:
                 <td class="px-4 py-3"><span class="text-xs px-2 py-1 rounded bg-slate-800">${{app.auth_primary || 'N/A'}}</span></td>
                 <td class="px-4 py-3 text-xs">${{app.self_serve ? '<span class="text-emerald-400">Self-serve</span>' : '<span class="text-amber-400">Gated</span>'}}</td>
                 <td class="px-4 py-3 text-xs text-slate-400">${{(app.api_type || []).join(', ') || 'N/A'}}</td>
-                <td class="px-4 py-3">${{app.has_existing_mcp ? '✅' : '—'}}</td>
+                <td class="px-4 py-3">${{app.composio_toolkit_exists ? `🧩 ${{app.composio_tools_count ?? ''}}` : (app.has_existing_mcp ? '✅' : '—')}}</td>
                 <td class="px-4 py-3"><span class="text-xs px-2 py-1 rounded ${{badgeClass[app.buildability] || ''}}">${{badgeEmoji[app.buildability] || ''}} ${{app.buildability || 'N/A'}}</span></td>
             </tr>
             <tr id="detail-${{app.id}}" class="hidden">
@@ -512,6 +514,7 @@ def _build_html(**kwargs) -> str:
                         <div><span class="text-slate-500">Has SDK:</span> <span class="text-slate-300">${{app.has_sdk ? 'Yes' : 'No'}} ${{(app.sdk_languages || []).length ? '(' + app.sdk_languages.join(', ') + ')' : ''}}</span></div>
                         <div><span class="text-slate-500">Webhooks:</span> <span class="text-slate-300">${{app.has_webhooks ? 'Yes' : 'No'}}</span></div>
                         <div><span class="text-slate-500">Confidence:</span> <span class="text-slate-300">${{app.confidence || 'N/A'}}</span></div>
+                        <div><span class="text-slate-500">Composio Toolkit:</span> <span class="text-slate-300">${{app.composio_toolkit_exists ? `Yes — ${{app.composio_tools_count}} tools (Composio catalog)` : 'Not yet built'}}</span></div>
                     </div>
                     <div class="mt-3 text-xs">
                         <span class="text-slate-500">Buildability Rationale:</span>
