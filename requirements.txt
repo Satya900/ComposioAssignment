@@ -1,0 +1,12 @@
+openai>=1.0.0
+# composio-core is the deprecated legacy SDK (ComposioToolSet/Action API) and
+# is no longer used. The current `composio` package is used directly for
+# Composio's toolkit-catalog lookup (agent/composio_lookup.py).
+composio>=0.17.0
+firecrawl-py>=1.0.0
+httpx>=0.27.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+tenacity>=8.0.0
+aiofiles>=23.0.0
+rich>=13.0.0
